@@ -2,8 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
 import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { RootStackParamList } from '../EchoLockScreen';
 
-const RecordScreen: React.FC = () => {
+type RecordScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Record'>;
+
+type Props = {
+  navigation: RecordScreenNavigationProp;
+};
+
+const RecordScreen: React.FC<Props> = ({ navigation }) => {
   // State variables
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -103,15 +111,15 @@ const RecordScreen: React.FC = () => {
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status === 'granted' && uri) {
         // Save recording to media library (optional)
-        // await MediaLibrary.createAssetAsync(uri);
+        await MediaLibrary.createAssetAsync(uri);
       }
       
-      // Show confirmation
-      Alert.alert(
-        'Recording Saved',
-        'Your voice note has been recorded successfully!',
-        [{ text: 'OK' }]
-      );
+      // Navigate to EchoLockScreen with the recording URI
+      if (uri) {
+        navigation.navigate('EchoLock', { recordingUri: uri });
+      } else {
+        Alert.alert('Error', 'Failed to save recording.');
+      }
     } catch (err) {
       console.error('Failed to stop recording', err);
       Alert.alert('Error', 'Failed to stop recording.');
@@ -146,11 +154,6 @@ const RecordScreen: React.FC = () => {
           {isRecording ? 'STOP' : 'RECORD'}
         </Text>
       </TouchableOpacity>
-      
-      {/* Recording status */}
-      {recordingUri && !isRecording && (
-        <Text style={styles.statusText}>Voice note recorded successfully!</Text>
-      )}
     </View>
   );
 };
