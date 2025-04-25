@@ -4,7 +4,7 @@ import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { uploadAudio, saveEchoRecord } from '../../lib/supabase';
+import { uploadAudio, saveEchoRecord, getEchoes } from '../../lib/supabase';
 import { scheduleUnlockNotification } from '../../services/notificationService';
 import { ANONYMOUS_USER_ID } from '../../lib/constants';
 import { RootStackParamList, TabParamList } from '../../types/navigation';
@@ -109,14 +109,22 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
         };
         
         // Save record to Supabase
-        const saved = await saveEchoRecord(echoData);
+        const result = await saveEchoRecord(echoData);
         
-        if (!saved) {
+        if (!result) {
           throw new Error('Failed to save echo data to database');
         }
 
-        // Schedule notification for unlock time
-        const notificationId = await scheduleUnlockNotification(echoData);
+        // Get the saved record with its generated ID
+        const records = await getEchoes(ANONYMOUS_USER_ID);
+        const savedEcho = records.find(echo => echo.audio_url === audioUrl);
+
+        if (!savedEcho) {
+          throw new Error('Could not find saved echo record');
+        }
+
+        // Schedule notification for unlock time with the saved echo data
+        const notificationId = await scheduleUnlockNotification(savedEcho);
         console.log('Scheduled notification:', notificationId);
         
         // Show success message and navigate to Vault
