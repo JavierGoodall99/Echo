@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, TouchableOpacity, Alert, ActivityIndicator } fr
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { uploadAudio, saveEchoRecord } from '../../lib/supabase';
+import { ANONYMOUS_USER_ID } from '../../lib/constants';
 
 // Define the stack parameter list
 export type RootStackParamList = {
@@ -103,7 +104,7 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
         
         // Create echo record to save in the database
         const echoData = {
-          user_id: 'anonymous_user', // Replace with actual user ID when auth is implemented
+          user_id: ANONYMOUS_USER_ID, // Use the same UUID as in VaultScreen
           audio_url: audioUrl,
           created_at: new Date().toISOString(),
           unlock_at: unlockDate.toISOString(),

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Audio } from 'expo-av';
 import { supabase } from '../../lib/supabase';
+import { ANONYMOUS_USER_ID } from '../../lib/constants';
 
 interface Echo {
   id: string;
@@ -25,12 +26,11 @@ const VaultScreen: React.FC = () => {
     try {
       setLoading(true);
       
-      // For now, we're using a fixed user_id
-      // This should be replaced with the authenticated user's ID once auth is implemented
+      // Using the fixed UUID for anonymous users
       const { data, error } = await supabase
         .from('echoes')
         .select('*')
-        .eq('user_id', 'anonymous_user')
+        .eq('user_id', ANONYMOUS_USER_ID)
         .order('created_at', { ascending: false });
         
       if (error) {
