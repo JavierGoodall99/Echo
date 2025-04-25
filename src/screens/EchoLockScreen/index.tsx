@@ -2,20 +2,18 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { CompositeNavigationProp } from '@react-navigation/native';
+import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { uploadAudio, saveEchoRecord } from '../../lib/supabase';
+import { scheduleUnlockNotification } from '../../services/notificationService';
 import { ANONYMOUS_USER_ID } from '../../lib/constants';
+import { RootStackParamList, TabParamList } from '../../types/navigation';
 
-// Define the stack parameter list
-export type RootStackParamList = {
-  Record: undefined;
-  EchoLock: {
-    recordingUri: string;
-  };
-  Vault: undefined;
-};
-
-// Type for navigation prop
-type EchoLockScreenNavigationProp = StackNavigationProp<RootStackParamList, 'EchoLock'>;
+// Type for navigation prop with nested navigation
+type EchoLockScreenNavigationProp = CompositeNavigationProp<
+  StackNavigationProp<RootStackParamList, 'EchoLock'>,
+  BottomTabNavigationProp<TabParamList>
+>;
 
 // Type for route prop
 type EchoLockScreenRouteProp = RouteProp<RootStackParamList, 'EchoLock'>;
@@ -104,7 +102,7 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
         
         // Create echo record to save in the database
         const echoData = {
-          user_id: ANONYMOUS_USER_ID, // Use the same UUID as in VaultScreen
+          user_id: ANONYMOUS_USER_ID,
           audio_url: audioUrl,
           created_at: new Date().toISOString(),
           unlock_at: unlockDate.toISOString(),
@@ -116,6 +114,10 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
         if (!saved) {
           throw new Error('Failed to save echo data to database');
         }
+
+        // Schedule notification for unlock time
+        const notificationId = await scheduleUnlockNotification(echoData);
+        console.log('Scheduled notification:', notificationId);
         
         // Show success message and navigate to Vault
         Alert.alert(
@@ -126,7 +128,7 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
           [
             { 
               text: 'OK', 
-              onPress: () => navigation.navigate('Vault')
+              onPress: () => navigation.navigate('VaultTab' as never)
             }
           ]
         );

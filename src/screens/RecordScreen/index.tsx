@@ -4,7 +4,7 @@ import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../EchoLockScreen';
+import { RootStackParamList } from '../../types/navigation';
 
 type RecordScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Record'>;
 

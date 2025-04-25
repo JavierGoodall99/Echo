@@ -1,54 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { Audio } from 'expo-av';
-import { getEchoes } from '../../lib/supabase';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { supabase, EchoRecord } from '../../lib/supabase';
 import { ANONYMOUS_USER_ID } from '../../lib/constants';
-import * as FileSystem from 'expo-file-system';
+import { RootStackParamList } from '../../types/navigation';
 
-interface Echo {
-  id?: string;
-  user_id: string;
-  audio_url: string;
-  created_at?: string;
-  unlock_at: string;
-  mood_tag?: string;
-}
+type VaultScreenNavigationProp = StackNavigationProp<RootStackParamList>;
 
 const VaultScreen: React.FC = () => {
-  const [echoes, setEchoes] = useState<Echo[]>([]);
-  const [lockedEchoes, setLockedEchoes] = useState<Echo[]>([]);
-  const [availableEchoes, setAvailableEchoes] = useState<Echo[]>([]);
+  const navigation = useNavigation<VaultScreenNavigationProp>();
+  const [echoes, setEchoes] = useState<EchoRecord[]>([]);
+  const [lockedEchoes, setLockedEchoes] = useState<EchoRecord[]>([]);
+  const [availableEchoes, setAvailableEchoes] = useState<EchoRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
   
-  // Fetch echoes using our local storage function
+  // Fetch echoes directly from Supabase
   const fetchEchoes = async () => {
     try {
       setLoading(true);
       
-      // Get echoes from local storage
-      const data = await getEchoes(ANONYMOUS_USER_ID);
+      // First try to get data from Supabase
+      const { data, error } = await supabase
+        .from('echoes')
+        .select('*')
+        .eq('user_id', ANONYMOUS_USER_ID)
+        .order('created_at', { ascending: false });
       
-      if (data) {
-        setEchoes(data as Echo[]);
+      if (error) {
+        console.error('Error fetching from Supabase:', error);
         
-        // Separate echoes into available and locked based on unlock_at date
-        const now = new Date();
-        const available: Echo[] = [];
-        const locked: Echo[] = [];
-        
-        data.forEach((echo: Echo) => {
-          const unlockDate = new Date(echo.unlock_at);
-          if (unlockDate <= now) {
-            available.push(echo);
-          } else {
-            locked.push(echo);
-          }
-        });
-        
-        setAvailableEchoes(available);
-        setLockedEchoes(locked);
+        // Fallback to local storage if Supabase fetch fails
+        const localData = await getLocalEchoes();
+        processEchoData(localData);
+      } else if (data && data.length > 0) {
+        processEchoData(data);
+      } else {
+        // If no data from Supabase, try local storage
+        const localData = await getLocalEchoes();
+        processEchoData(localData);
       }
     } catch (error) {
       console.error('Error fetching echoes:', error);
@@ -58,17 +48,52 @@ const VaultScreen: React.FC = () => {
     }
   };
   
+  // Get echoes from local storage as fallback
+  const getLocalEchoes = async () => {
+    // Use the existing function from lib/supabase.ts
+    const { getEchoes } = require('../../lib/supabase');
+    return await getEchoes(ANONYMOUS_USER_ID);
+  };
+  
+  // Process and categorize echo data
+  const processEchoData = (data: EchoRecord[]) => {
+    if (data && data.length > 0) {
+      setEchoes(data);
+      
+      // Separate echoes into available and locked based on unlock_at date
+      const now = new Date();
+      const available: EchoRecord[] = [];
+      const locked: EchoRecord[] = [];
+      
+      data.forEach((echo) => {
+        const unlockDate = new Date(echo.unlock_at);
+        if (unlockDate <= now) {
+          available.push(echo);
+        } else {
+          locked.push(echo);
+        }
+      });
+      
+      setAvailableEchoes(available);
+      setLockedEchoes(locked);
+    } else {
+      setEchoes([]);
+      setAvailableEchoes([]);
+      setLockedEchoes([]);
+    }
+  };
+  
   // Load echoes when the screen mounts
   useEffect(() => {
     fetchEchoes();
     
-    // Clean up sound on component unmount
-    return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
-    };
-  }, []);
+    // Refresh echoes when the screen is focused
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchEchoes();
+    });
+    
+    return unsubscribe;
+  }, [navigation]);
   
   // Format date display
   const formatDate = (dateString: string): string => {
@@ -94,67 +119,46 @@ const VaultScreen: React.FC = () => {
       return diffHours > 1 ? `${diffHours} hours` : 'Less than an hour';
     }
   };
-  
-  // Play an audio file
-  const playSound = async (audioUrl: string, echoId: string) => {
-    try {
-      // Stop any currently playing sound
-      if (sound) {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-        setSound(null);
-      }
-      
-      console.log(`Playing audio from: ${audioUrl}`);
-      
-      // Load and play the audio
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUrl },
-        { shouldPlay: true }
-      );
-      
-      setSound(newSound);
-      setPlayingId(echoId);
-      
-      // When playback finishes
-      newSound.setOnPlaybackStatusUpdate(status => {
-        if (status.isLoaded && status.didJustFinish) {
-          setPlayingId(null);
-        }
-      });
-    } catch (error) {
-      console.error('Error playing sound:', error);
-      Alert.alert('Playback Error', 'Could not play this recording. The file may no longer exist.');
-    }
+
+  // Navigate to PlaybackScreen with echo data
+  const navigateToPlayback = (echo: EchoRecord) => {
+    navigation.navigate('PlaybackScreen', { echo });
   };
   
   // Render an available echo item
-  const renderAvailableEchoItem = ({ item }: { item: Echo }) => (
+  const renderAvailableEchoItem = ({ item }: { item: EchoRecord }) => (
     <TouchableOpacity 
       style={styles.echoItem}
-      onPress={() => playSound(item.audio_url, item.id || 'temp-id')}
+      onPress={() => navigateToPlayback(item)}
     >
       <View style={styles.echoContent}>
-        <Text style={styles.echoDate}>{formatDate(item.created_at ?? new Date().toISOString())}</Text>
+        <Text style={styles.echoDate}>
+          {formatDate(item.created_at ?? new Date().toISOString())}
+        </Text>
+        {item.mood_tag && (
+          <Text style={styles.moodTag}>
+            {item.mood_tag}
+          </Text>
+        )}
         <Text style={styles.echoSubtitle}>
-          {playingId === item.id ? 'Playing...' : 'Tap to play'}
+          Tap to listen
         </Text>
       </View>
-      {playingId === item.id && (
-        <View style={styles.playingIndicator}>
-          <Text style={styles.playingText}>▶</Text>
-        </View>
-      )}
+      <View style={styles.playButton}>
+        <Text style={styles.playButtonText}>▶</Text>
+      </View>
     </TouchableOpacity>
   );
   
   // Render a locked echo item
-  const renderLockedEchoItem = ({ item }: { item: Echo }) => (
+  const renderLockedEchoItem = ({ item }: { item: EchoRecord }) => (
     <View style={[styles.echoItem, styles.lockedEchoItem]}>
       <View style={styles.echoContent}>
-        <Text style={styles.echoDate}>{formatDate(item.created_at ?? new Date().toISOString())}</Text>
+        <Text style={styles.echoDate}>
+          {formatDate(item.created_at ?? new Date().toISOString())}
+        </Text>
         <Text style={styles.echoSubtitle}>
-          Unlocks in {getTimeUntilUnlock(item.unlock_at)}
+          Available in {getTimeUntilUnlock(item.unlock_at)}
         </Text>
       </View>
       <View style={styles.lockIcon}>
@@ -176,37 +180,51 @@ const VaultScreen: React.FC = () => {
     <View style={styles.container}>
       <Text style={styles.title}>Your Echo Vault</Text>
       
-      {/* Available Echoes Section */}
-      <View style={styles.sectionContainer}>
-        <Text style={styles.sectionTitle}>Available Echoes</Text>
-        {availableEchoes.length > 0 ? (
-          <FlatList
-            data={availableEchoes}
-            renderItem={renderAvailableEchoItem}
-            keyExtractor={item => item.id || item.created_at || String(Math.random())}
-            style={styles.echoList}
-          />
-        ) : (
-          <Text style={styles.emptyText}>No available echoes yet</Text>
-        )}
-      </View>
+      {echoes.length === 0 ? (
+        <View style={styles.emptyStateContainer}>
+          <Text style={styles.emptyStateText}>No echoes yet. Speak your first memory!</Text>
+          <TouchableOpacity
+            style={styles.createButton}
+            onPress={() => navigation.navigate('Record' as never)}
+          >
+            <Text style={styles.createButtonText}>Record an Echo</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          {/* Available Echoes Section */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Available Echoes</Text>
+            {availableEchoes.length > 0 ? (
+              <FlatList
+                data={availableEchoes}
+                renderItem={renderAvailableEchoItem}
+                keyExtractor={item => item.id || item.created_at || String(Math.random())}
+                style={styles.echoList}
+              />
+            ) : (
+              <Text style={styles.emptyText}>No available echoes yet</Text>
+            )}
+          </View>
+          
+          {/* Locked Echoes Section */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Locked Echoes</Text>
+            {lockedEchoes.length > 0 ? (
+              <FlatList
+                data={lockedEchoes}
+                renderItem={renderLockedEchoItem}
+                keyExtractor={item => item.id || item.created_at || String(Math.random())}
+                style={styles.echoList}
+              />
+            ) : (
+              <Text style={styles.emptyText}>No locked echoes</Text>
+            )}
+          </View>
+        </>
+      )}
       
-      {/* Locked Echoes Section */}
-      <View style={styles.sectionContainer}>
-        <Text style={styles.sectionTitle}>Locked Echoes</Text>
-        {lockedEchoes.length > 0 ? (
-          <FlatList
-            data={lockedEchoes}
-            renderItem={renderLockedEchoItem}
-            keyExtractor={item => item.id || item.created_at || String(Math.random())}
-            style={styles.echoList}
-          />
-        ) : (
-          <Text style={styles.emptyText}>No locked echoes</Text>
-        )}
-      </View>
-      
-      {/* Pull to refresh */}
+      {/* Refresh button */}
       <TouchableOpacity
         style={styles.refreshButton}
         onPress={fetchEchoes}
@@ -269,6 +287,7 @@ const styles = StyleSheet.create({
   },
   lockedEchoItem: {
     backgroundColor: '#F0F0F0',
+    opacity: 0.8,
   },
   echoContent: {
     flex: 1,
@@ -278,11 +297,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 4,
   },
+  moodTag: {
+    fontSize: 14,
+    color: '#0066CC',
+    marginBottom: 4,
+  },
   echoSubtitle: {
     color: '#666',
     fontSize: 14,
   },
-  playingIndicator: {
+  playButton: {
     backgroundColor: '#0066CC',
     width: 36,
     height: 36,
@@ -290,7 +314,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  playingText: {
+  playButtonText: {
     color: 'white',
     fontWeight: 'bold',
   },
@@ -315,6 +339,29 @@ const styles = StyleSheet.create({
     marginVertical: 16,
   },
   refreshButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    fontSize: 18,
+    color: '#555',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  createButton: {
+    backgroundColor: '#0066CC',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    width: '80%',
+  },
+  createButtonText: {
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
