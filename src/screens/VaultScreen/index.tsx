@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Audio } from 'expo-av';
-import { supabase } from '../../lib/supabase';
+import { getEchoes } from '../../lib/supabase';
 import { ANONYMOUS_USER_ID } from '../../lib/constants';
+import * as FileSystem from 'expo-file-system';
 
 interface Echo {
-  id: string;
+  id?: string;
   user_id: string;
   audio_url: string;
-  created_at: string;
+  created_at?: string;
   unlock_at: string;
   mood_tag?: string;
 }
@@ -21,21 +22,13 @@ const VaultScreen: React.FC = () => {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   
-  // Fetch echoes from Supabase
+  // Fetch echoes using our local storage function
   const fetchEchoes = async () => {
     try {
       setLoading(true);
       
-      // Using the fixed UUID for anonymous users
-      const { data, error } = await supabase
-        .from('echoes')
-        .select('*')
-        .eq('user_id', ANONYMOUS_USER_ID)
-        .order('created_at', { ascending: false });
-        
-      if (error) {
-        throw error;
-      }
+      // Get echoes from local storage
+      const data = await getEchoes(ANONYMOUS_USER_ID);
       
       if (data) {
         setEchoes(data as Echo[]);
@@ -112,7 +105,9 @@ const VaultScreen: React.FC = () => {
         setSound(null);
       }
       
-      // Load and play the new sound
+      console.log(`Playing audio from: ${audioUrl}`);
+      
+      // Load and play the audio
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
         { shouldPlay: true }
@@ -129,7 +124,7 @@ const VaultScreen: React.FC = () => {
       });
     } catch (error) {
       console.error('Error playing sound:', error);
-      Alert.alert('Playback Error', 'Could not play this recording.');
+      Alert.alert('Playback Error', 'Could not play this recording. The file may no longer exist.');
     }
   };
   
@@ -137,10 +132,10 @@ const VaultScreen: React.FC = () => {
   const renderAvailableEchoItem = ({ item }: { item: Echo }) => (
     <TouchableOpacity 
       style={styles.echoItem}
-      onPress={() => playSound(item.audio_url, item.id)}
+      onPress={() => playSound(item.audio_url, item.id || 'temp-id')}
     >
       <View style={styles.echoContent}>
-        <Text style={styles.echoDate}>{formatDate(item.created_at)}</Text>
+        <Text style={styles.echoDate}>{formatDate(item.created_at ?? new Date().toISOString())}</Text>
         <Text style={styles.echoSubtitle}>
           {playingId === item.id ? 'Playing...' : 'Tap to play'}
         </Text>
@@ -157,7 +152,7 @@ const VaultScreen: React.FC = () => {
   const renderLockedEchoItem = ({ item }: { item: Echo }) => (
     <View style={[styles.echoItem, styles.lockedEchoItem]}>
       <View style={styles.echoContent}>
-        <Text style={styles.echoDate}>{formatDate(item.created_at)}</Text>
+        <Text style={styles.echoDate}>{formatDate(item.created_at ?? new Date().toISOString())}</Text>
         <Text style={styles.echoSubtitle}>
           Unlocks in {getTimeUntilUnlock(item.unlock_at)}
         </Text>
@@ -188,7 +183,7 @@ const VaultScreen: React.FC = () => {
           <FlatList
             data={availableEchoes}
             renderItem={renderAvailableEchoItem}
-            keyExtractor={item => item.id}
+            keyExtractor={item => item.id || item.created_at || String(Math.random())}
             style={styles.echoList}
           />
         ) : (
@@ -203,7 +198,7 @@ const VaultScreen: React.FC = () => {
           <FlatList
             data={lockedEchoes}
             renderItem={renderLockedEchoItem}
-            keyExtractor={item => item.id}
+            keyExtractor={item => item.id || item.created_at || String(Math.random())}
             style={styles.echoList}
           />
         ) : (

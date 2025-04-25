@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../EchoLockScreen';
 
@@ -84,9 +85,33 @@ const RecordScreen: React.FC<Props> = ({ navigation }) => {
         playsInSilentModeIOS: true,
       });
       
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      // Custom recording options for better upload performance
+      const recordingOptions = {
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.m4a',
+          audioQuality: Audio.IOSAudioQuality.MEDIUM,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      };
+      
+      const { recording } = await Audio.Recording.createAsync(recordingOptions);
       
       setRecording(recording);
       setIsRecording(true);
@@ -103,26 +128,57 @@ const RecordScreen: React.FC<Props> = ({ navigation }) => {
     try {
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
-      setRecordingUri(uri);
+      
+      if (!uri) {
+        throw new Error("Recording URI is undefined");
+      }
+      
+      console.log(`Original recording URI: ${uri}`);
+      
+      // Process the URI to ensure it's in a format compatible with uploads
+      let processedUri = uri;
+      
+      // Get file info
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        console.log(`File exists: ${fileInfo.exists}${fileInfo.exists && 'size' in fileInfo ? `, Size: ${fileInfo.size} bytes` : ''}`);
+        
+        // If file is too large (> 5MB), alert the user
+        if (fileInfo.exists && 'size' in fileInfo && fileInfo.size > 5 * 1024 * 1024) {
+          Alert.alert('Warning', 'Audio file is quite large. Upload may take longer.');
+        }
+      } catch (error) {
+        console.error('Error checking file info:', error);
+      }
+
+      // On Android, make sure the URI has the correct format
+      if (Platform.OS === 'android' && !uri.startsWith('file://')) {
+        processedUri = `file://${uri}`;
+      }
+      
+      console.log(`Processed URI for upload: ${processedUri}`);
+      setRecordingUri(processedUri);
       setRecording(null);
       setIsRecording(false);
       
       // Request media library permissions to save the recording
       const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status === 'granted' && uri) {
-        // Save recording to media library (optional)
-        await MediaLibrary.createAssetAsync(uri);
+      if (status === 'granted') {
+        try {
+          // Save recording to media library (optional)
+          const asset = await MediaLibrary.createAssetAsync(uri);
+          console.log('Saved to media library as asset:', asset);
+        } catch (error) {
+          console.error('Error saving to media library:', error);
+        }
       }
       
-      // Navigate to EchoLockScreen with the recording URI
-      if (uri) {
-        navigation.navigate('EchoLock', { recordingUri: uri });
-      } else {
-        Alert.alert('Error', 'Failed to save recording.');
-      }
+      // Navigate to EchoLockScreen with the processed recording URI
+      navigation.navigate('EchoLock', { recordingUri: processedUri });
+      
     } catch (err) {
-      console.error('Failed to stop recording', err);
-      Alert.alert('Error', 'Failed to stop recording.');
+      console.error('Failed to stop recording:', err);
+      Alert.alert('Error', 'Failed to process recording. Please try again.');
     }
   };
 
