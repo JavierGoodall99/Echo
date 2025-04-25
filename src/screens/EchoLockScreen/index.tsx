@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { uploadAudio, saveEchoRecord } from '../../lib/supabase';
 
 // Define the stack parameter list
 export type RootStackParamList = {
@@ -35,6 +36,7 @@ interface UnlockOption {
 const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
   const { recordingUri } = route.params;
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // Unlock options
   const unlockOptions: UnlockOption[] = [
@@ -66,8 +68,15 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
     setSelectedOption(optionId);
   };
 
+  // Generate a unique filename for the audio recording
+  const generateFileName = (): string => {
+    const timestamp = new Date().getTime();
+    const randomString = Math.random().toString(36).substring(2, 8);
+    return `echo_${timestamp}_${randomString}.m4a`;
+  };
+  
   // Handle confirm button press
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!selectedOption) {
       Alert.alert('Selection required', 'Please select when you want this Echo to be available.');
       return;
@@ -76,31 +85,60 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
     const selectedOptionObj = unlockOptions.find(option => option.id === selectedOption);
     
     if (selectedOptionObj) {
-      const unlockDate = calculateUnlockDate(selectedOptionObj);
-      
-      // Here you would typically save this data to your storage or state management
-      const echoData = {
-        recordingUri,
-        unlockAt: unlockDate.toISOString(),
-        createdAt: new Date().toISOString(),
-        lockOption: selectedOptionObj.id,
-      };
-      
-      console.log('Echo data saved:', echoData);
-      
-      // Show success message and navigate to Vault
-      Alert.alert(
-        'Echo Locked Away',
-        `Your voice note will be available ${selectedOptionObj.isRandom 
-          ? 'on a random day within the next month' 
-          : `in ${selectedOptionObj.days} day${selectedOptionObj.days !== 1 ? 's' : ''}`}`,
-        [
-          { 
-            text: 'OK', 
-            onPress: () => navigation.navigate('Vault')
-          }
-        ]
-      );
+      try {
+        setIsLoading(true);
+        
+        // Calculate unlock date
+        const unlockDate = calculateUnlockDate(selectedOptionObj);
+        
+        // Generate a unique filename
+        const fileName = generateFileName();
+        
+        // Upload audio to Supabase storage
+        const audioUrl = await uploadAudio(recordingUri, fileName);
+        
+        if (!audioUrl) {
+          throw new Error('Failed to upload audio file');
+        }
+        
+        // Create echo record to save in the database
+        const echoData = {
+          user_id: 'anonymous_user', // Replace with actual user ID when auth is implemented
+          audio_url: audioUrl,
+          created_at: new Date().toISOString(),
+          unlock_at: unlockDate.toISOString(),
+        };
+        
+        // Save record to Supabase
+        const saved = await saveEchoRecord(echoData);
+        
+        if (!saved) {
+          throw new Error('Failed to save echo data to database');
+        }
+        
+        // Show success message and navigate to Vault
+        Alert.alert(
+          'Echo Locked Away',
+          `Your voice note will be available ${selectedOptionObj.isRandom 
+            ? 'on a random day within the next month' 
+            : `in ${selectedOptionObj.days} day${selectedOptionObj.days !== 1 ? 's' : ''}`}`,
+          [
+            { 
+              text: 'OK', 
+              onPress: () => navigation.navigate('Vault')
+            }
+          ]
+        );
+      } catch (error) {
+        console.error('Error saving echo:', error);
+        Alert.alert(
+          'Error',
+          'There was a problem saving your Echo. Please try again.',
+          [{ text: 'OK' }]
+        );
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -118,6 +156,7 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
               selectedOption === option.id && styles.selectedOption
             ]}
             onPress={() => handleOptionSelect(option.id)}
+            disabled={isLoading}
           >
             <Text 
               style={[
@@ -133,10 +172,15 @@ const EchoLockScreen: React.FC<Props> = ({ navigation, route }) => {
       
       {/* Confirm button */}
       <TouchableOpacity
-        style={styles.confirmButton}
+        style={[styles.confirmButton, isLoading && styles.disabledButton]}
         onPress={handleConfirm}
+        disabled={isLoading}
       >
-        <Text style={styles.confirmButtonText}>Lock It Away</Text>
+        {isLoading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.confirmButtonText}>Lock It Away</Text>
+        )}
       </TouchableOpacity>
     </View>
   );
@@ -192,6 +236,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     width: '100%',
     alignItems: 'center',
+  },
+  disabledButton: {
+    backgroundColor: '#7FAAD4',
   },
   confirmButtonText: {
     color: '#FFFFFF',
